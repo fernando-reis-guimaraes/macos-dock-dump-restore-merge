@@ -1,6 +1,29 @@
 #!/bin/sh
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+    */*)
+        ;;
+    *)
+        SCRIPT_PATH=$(command -v "$SCRIPT_PATH") || exit 1
+        ;;
+esac
+
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd) || exit 1
+    LINK_TARGET=$(readlink "$SCRIPT_PATH") || exit 1
+
+    case "$LINK_TARGET" in
+        /*)
+            SCRIPT_PATH=$LINK_TARGET
+            ;;
+        *)
+            SCRIPT_PATH=$SCRIPT_DIR/$LINK_TARGET
+            ;;
+    esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd) || exit 1
 CORE="$SCRIPT_DIR/macos-dock.py"
 
 error() {
