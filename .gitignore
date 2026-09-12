@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.dock.json
+*.com.apple.dock.plist

@@ -1,0 +1,108 @@
+#!/bin/sh
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CORE="$SCRIPT_DIR/macos-dock.py"
+
+error() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+validate_host() {
+    host=$1
+    host_only=${host##*@}
+    host_only=$(printf '%s' "$host_only" | tr '[:upper:]' '[:lower:]')
+
+    case "$host_only" in
+        \[*\])
+            host_only=${host_only#\[}
+            host_only=${host_only%\]}
+            ;;
+    esac
+
+    case "$host_only" in
+        localhost|127.0.0.1|::1)
+            error "loopback SSH target is not allowed: $host; use the Mac's .local hostname"
+            ;;
+    esac
+}
+
+usage() {
+    cat <<'EOF_USAGE'
+usage: macos-dock <command> [arguments]
+
+commands:
+  dump <host> [output]             Dump portable Dock contents as JSON
+  restore <host> <dump>            Restore portable Dock contents
+  merge <dump-a> <dump-b> [output] Merge two portable Dock dumps
+  diff <dump-a> <dump-b>           Compare portable Dock dumps
+  raw-dump <host> [output]         Export the complete com.apple.dock plist
+  raw-restore <host> <plist>       Restore the complete com.apple.dock plist
+EOF_USAGE
+}
+
+raw_dump() {
+    [ "$#" -ge 1 ] && [ "$#" -le 2 ] || error "usage: macos-dock raw-dump <host> [output]"
+
+    host=$1
+    output=${2-}
+    validate_host "$host"
+
+    if [ -z "$output" ]; then
+        exec ssh "$host" 'defaults export com.apple.dock -'
+    fi
+
+    output_dir=$(dirname -- "$output")
+    output_name=$(basename -- "$output")
+    mkdir -p "$output_dir" || error "cannot create output directory: $output_dir"
+
+    temp_path=$(mktemp "$output_dir/.${output_name}.XXXXXX") || error "cannot create temporary output file"
+    trap 'rm -f "$temp_path"' EXIT HUP INT TERM
+
+    if ! ssh "$host" 'defaults export com.apple.dock -' > "$temp_path"; then
+        error "failed to export Dock from $host"
+    fi
+
+    if ! plutil -lint "$temp_path" >/dev/null; then
+        error "invalid plist returned by $host"
+    fi
+
+    mv -f "$temp_path" "$output" || error "cannot replace output file: $output"
+    trap - EXIT HUP INT TERM
+}
+
+raw_restore() {
+    [ "$#" -eq 2 ] || error "usage: macos-dock raw-restore <host> <plist>"
+
+    host=$1
+    plist=$2
+    validate_host "$host"
+
+    [ -f "$plist" ] || error "plist not found: $plist"
+    plutil -lint "$plist" >/dev/null || error "invalid plist: $plist"
+
+    ssh "$host" 'defaults import com.apple.dock - && killall Dock' < "$plist" \
+        || error "failed to restore Dock on $host"
+}
+
+case "${1-}" in
+    raw-dump)
+        shift
+        raw_dump "$@"
+        ;;
+    raw-restore)
+        shift
+        raw_restore "$@"
+        ;;
+    -h|--help)
+        usage
+        ;;
+    '')
+        usage >&2
+        exit 2
+        ;;
+    *)
+        [ -x "$CORE" ] || error "core implementation not found or not executable: $CORE"
+        exec "$CORE" "$@"
+        ;;
+esac
